@@ -80,6 +80,15 @@ aws cloudformation create-stack \
 ```
 </details><br>
 
+This will create an instance that will be running a KMS. To test this, use the kurento client and provide the instance's public IP address in the following URL:
+http://localhost:8443/index.html?ws_uri=ws://PUBLIC_IP:8888/kurento
+
+To start the kurento client, simply run the folling commands on the `kurento-client-js/` folder to create the kurento client in a docker container.
+```
+docker build . -t kurento-client-js
+docker run -d kurento-client-js -p 8443:8443
+```
+
 ## 2. Initialize AWS MGN
 
 ```
@@ -179,7 +188,7 @@ sudo python3 aws-replication-installer-init.py \
 ```
 
 After these steps, the agent should be downloaded, installed and the server should be synced with AWS MGN.
-Go to [Application Migration Service > Source servers](https://eu-central-1.console.aws.amazon.com/mgn/home?region=eu-central-1#/sourceServers), and wait for the Migration life cycle to be *Ready for testing*.
+Go to [Application Migration Service > Source servers](https://eu-central-1.console.aws.amazon.com/mgn/home?region=eu-central-1#/sourceServers), and wait for the Migration life cycle to be *Ready for testing* (or continue the optional step 5, since it does not depend on this).
 
 
 
@@ -227,18 +236,18 @@ aws mgn update-launch-configuration \
 ```
 </details><br>
 
+TODO: create security group sg-02ace4f6edf5431df
 
 Now, we can finally create the EC2 Launch Template.
 
-We can put any string with less than 64 chars in the `--client-token`, it is only meant to ensure [indempotency in AWS](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Run_Instance_Idempotency.html).
+Here we can use the `--client-token` parameter, where we can put any string with less than 64 chars. It is only meant to ensure [indempotency in AWS](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/Run_Instance_Idempotency.html). For this case it is not used.
 
 The `--launch-template-id` is provided in the last step, but can also be found in the [EC2 > Launch templates](https://eu-central-1.console.aws.amazon.com/ec2/v2/home?region=eu-central-1#LaunchTemplates). Replace the ID in command below with it.
 ```
 aws ec2 create-launch-template-version \
---client-token my-client-token \
 --launch-template-id lt-098c8790e8e45c7f3 \
 --source-version 2 \
---launch-template-data '{"NetworkInterfaces":[{"AssociatePublicIpAddress":true}],"InstanceType":"t2.micro","KeyName":"KurentoKey2"}' \
+--launch-template-data '{"NetworkInterfaces":[{"DeviceIndex":0,"AssociatePublicIpAddress":true,"Groups":["sg-02ace4f6edf5431df"]}],"InstanceType":"t2.micro","KeyName":"KurentoKey2"}' \
 --region eu-central-1
 ```
 <details><summary>Response example:</summary>
@@ -265,7 +274,11 @@ aws ec2 create-launch-template-version \
             ],
             "NetworkInterfaces": [
                 {
-                    "AssociatePublicIpAddress": true
+                    "AssociatePublicIpAddress": true,
+                    "DeviceIndex": 0,
+                    "Groups": [
+                        "sg-02ace4f6edf5431df"
+                    ]
                 }
             ],
             "InstanceType": "t2.micro",
@@ -313,7 +326,7 @@ aws ec2 create-launch-template-version \
 </details><br>
 
 Finally, we need to change the default version to the version of the template just created. 
-Normally, in a fresh AWS accound, the version should be 3, but it also provisioned in the last response.
+Normally, in a fresh AWS account, the version should be 3, but it also provisioned in the last response.
 ```
 aws ec2 modify-launch-template \
 --launch-template-id lt-098c8790e8e45c7f3 \
@@ -336,3 +349,369 @@ aws ec2 modify-launch-template \
 ```
 </details><br>
 
+## 6. Launch Test Instance
+
+Launches a test instance for the specific source server. This will change the migration lifecycle to *Test in progress* and will launch a **AWS Application Migration Service Conversion Server** to handle the instance migration conversion. Once the conversion is completed, a test instance should be available.
+```
+aws mgn start-test \
+--source-server-ids s-13a5b49c3810fa449 \
+--region eu-central-1
+```
+<details><summary>Response example:</summary>
+
+```json
+{
+    "job": {
+        "arn": "arn:aws:mgn:eu-central-1:820726337684:job/mgnjob-10cba81b2d2b1167a",
+        "creationDateTime": "2022-08-31T14:33:26.983505+00:00",
+        "initiatedBy": "START_TEST",
+        "jobID": "mgnjob-10cba81b2d2b1167a",
+        "participatingServers": [
+            {
+                "launchStatus": "PENDING",
+                "sourceServerID": "s-13a5b49c3810fa449"
+            }
+        ],
+        "status": "PENDING",
+        "tags": {
+            "resourceArn": "arn:aws:mgn:eu-central-1:820726337684:job/mgnjob-10cba81b2d2b1167a"
+        },
+        "type": "LAUNCH"
+    }
+}
+```
+</details><br>
+
+Test this instance with the kurento client, as previously. Do not forget to change the public IP with the one from the test instance:
+http://localhost:8443/index.html?ws_uri=ws://PUBLIC_IP:8888/kurento
+
+
+## 7. Launch Cutover Instance
+
+If everything is working, mark the migration as *Ready for cutover* with the following command.
+
+```
+aws mgn change-server-life-cycle-state \
+--life-cycle state=READY_FOR_CUTOVER \
+--source-server-id s-13a5b49c3810fa449 \
+--region eu-central-1
+```
+<details><summary>Response example:</summary>
+
+```json
+{
+    "arn": "arn:aws:mgn:eu-central-1:820726337684:source-server/s-13a5b49c3810fa449",
+    "dataReplicationInfo": {
+        "dataReplicationInitiation": {
+            "nextAttemptDateTime": "2022-08-31T17:08:00+00:00",
+            "startDateTime": "2022-08-31T00:48:19.613446+00:00",
+            "steps": [
+                {
+                    "name": "WAIT",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "CREATE_SECURITY_GROUP",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "LAUNCH_REPLICATION_SERVER",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "BOOT_REPLICATION_SERVER",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "AUTHENTICATE_WITH_SERVICE",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "DOWNLOAD_REPLICATION_SOFTWARE",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "CREATE_STAGING_DISKS",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "ATTACH_STAGING_DISKS",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "PAIR_REPLICATION_SERVER_WITH_AGENT",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "CONNECT_AGENT_TO_REPLICATION_SERVER",
+                    "status": "SUCCEEDED"
+                },
+                {
+                    "name": "START_DATA_TRANSFER",
+                    "status": "SUCCEEDED"
+                }
+            ]
+        },
+        "dataReplicationState": "CONTINUOUS",
+        "lagDuration": "P0D",
+        "lastSnapshotDateTime": "2022-08-31T16:42:49.446799+00:00",
+        "replicatedDisks": [
+            {
+                "backloggedStorageBytes": 0,
+                "deviceName": "/dev/xvda",
+                "replicatedStorageBytes": 8589934592,
+                "rescannedStorageBytes": 8589934592,
+                "totalStorageBytes": 8589934592
+            }
+        ]
+    },
+    "isArchived": false,
+    "launchedInstance": {
+        "ec2InstanceID": "i-00dc9c253fa179036",
+        "firstBoot": "SUCCEEDED",
+        "jobID": "mgnjob-113f80bf2819a725e"
+    },
+    "lifeCycle": {
+        "addedToServiceDateTime": "2022-08-31T00:47:10.686735+00:00",
+        "elapsedReplicationDuration": "PT16H20M38.697305S",
+        "firstByteDateTime": "2022-08-31T00:50:51.450542+00:00",
+        "lastCutover": {
+            "finalized": {},
+            "initiated": {},
+            "reverted": {}
+        },
+        "lastSeenByServiceDateTime": "2022-08-31T17:06:11.954571+00:00",
+        "lastTest": {
+            "finalized": {},
+            "initiated": {
+                "apiCallDateTime": "2022-08-31T15:42:30.904212+00:00",
+                "jobID": "mgnjob-113f80bf2819a725e"
+            },
+            "reverted": {}
+        },
+        "state": "READY_FOR_CUTOVER"
+    },
+    "replicationType": "AGENT_BASED",
+    "sourceProperties": {
+        "cpus": [
+            {
+                "cores": 1,
+                "modelName": "Intel(R) Xeon(R) CPU E5-2676 v3 @ 2.40GHz"
+            }
+        ],
+        "disks": [
+            {
+                "bytes": 8589934592,
+                "deviceName": "/dev/xvda"
+            }
+        ],
+        "identificationHints": {
+            "awsInstanceID": "i-0982f5a2ad5c1a85c",
+            "fqdn": "ip-172-31-22-187.ec2.internal",
+            "hostname": "ip-172-31-22-187"
+        },
+        "lastUpdatedDateTime": "2022-08-31T16:48:56.355953+00:00",
+        "networkInterfaces": [
+            {
+                "ips": [
+                    "172.31.22.187"
+                ],
+                "isPrimary": true,
+                "macAddress": "0A-40-F1-E8-B2-2D"
+            }
+        ],
+        "os": {
+            "fullString": "Linux version 4.4.0-1087-aws (buildd@lcy01-amd64-010) (gcc version 5.4.0 20160609 (Ubuntu 5.4.0-6ubuntu1~16.04.10) ) #98-Ubuntu SMP Wed Jun 26 05:50:53 UTC 2019"
+        },
+        "ramBytes": 1038729216,
+        "recommendedInstanceType": "c4.large"
+    },
+    "sourceServerID": "s-13a5b49c3810fa449",
+    "tags": {
+        "resourceArn": "arn:aws:mgn:eu-central-1:820726337684:source-server/s-13a5b49c3810fa449"
+    }
+}
+```
+</details><br>
+
+Only afterwards it is possible to launch the cutover instances. Executing this will set the source server's migration lifecycle with *Cutover in progress*. Then, it will terminate the test instance and start the cutover instance.
+```
+aws mgn start-cutover \
+--source-server-ids s-13a5b49c3810fa449 \
+--region eu-central-1
+```
+<details><summary>Response example:</summary>
+
+```json
+{
+    "job": {
+        "arn": "arn:aws:mgn:eu-central-1:820726337684:job/mgnjob-11d8c23ab1e3c9dc2",
+        "creationDateTime": "2022-08-31T17:10:13.411702+00:00",
+        "initiatedBy": "START_CUTOVER",
+        "jobID": "mgnjob-11d8c23ab1e3c9dc2",
+        "participatingServers": [
+            {
+                "launchStatus": "PENDING",
+                "sourceServerID": "s-13a5b49c3810fa449"
+            }
+        ],
+        "status": "PENDING",
+        "tags": {
+            "resourceArn": "arn:aws:mgn:eu-central-1:820726337684:job/mgnjob-11d8c23ab1e3c9dc2"
+        },
+        "type": "LAUNCH"
+    }
+}
+```
+</details><br>
+
+After the cutover instance is up and running, test it with the cutover instance's public IP.
+
+Now it is possible to finalize the cutover.
+```
+aws mgn finalize-cutover \
+--source-server-id s-13a5b49c3810fa449 \
+--region eu-central-1
+```
+<details><summary>Response example:</summary>
+
+```json
+{
+    "arn": "arn:aws:mgn:eu-central-1:820726337684:source-server/s-13a5b49c3810fa449",
+    "dataReplicationInfo": {
+        "dataReplicationInitiation": {
+            "nextAttemptDateTime": "2022-08-31T18:07:00+00:00",
+            "startDateTime": "2022-08-31T18:06:24.362299+00:00",
+            "steps": [
+                {
+                    "name": "WAIT",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "CREATE_SECURITY_GROUP",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "LAUNCH_REPLICATION_SERVER",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "BOOT_REPLICATION_SERVER",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "AUTHENTICATE_WITH_SERVICE",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "DOWNLOAD_REPLICATION_SOFTWARE",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "CREATE_STAGING_DISKS",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "ATTACH_STAGING_DISKS",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "PAIR_REPLICATION_SERVER_WITH_AGENT",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "CONNECT_AGENT_TO_REPLICATION_SERVER",
+                    "status": "NOT_STARTED"
+                },
+                {
+                    "name": "START_DATA_TRANSFER",
+                    "status": "NOT_STARTED"
+                }
+            ]
+        },
+        "dataReplicationState": "DISCONNECTED",
+        "replicatedDisks": [
+            {
+                "backloggedStorageBytes": 0,
+                "deviceName": "/dev/xvda",
+                "replicatedStorageBytes": 8589934592,
+                "rescannedStorageBytes": 8589934592,
+                "totalStorageBytes": 8589934592
+            }
+        ]
+    },
+    "isArchived": false,
+    "launchedInstance": {
+        "ec2InstanceID": "i-07e0559b366d0e404",
+        "firstBoot": "SUCCEEDED",
+        "jobID": "mgnjob-11d8c23ab1e3c9dc2"
+    },
+    "lifeCycle": {
+        "addedToServiceDateTime": "2022-08-31T00:47:10.686735+00:00",
+        "elapsedReplicationDuration": "PT17H19M13.655655S",
+        "firstByteDateTime": "2022-08-31T00:50:51.450542+00:00",
+        "lastCutover": {
+            "finalized": {
+                "apiCallDateTime": "2022-08-31T18:06:24.412320+00:00"
+            },
+            "initiated": {
+                "apiCallDateTime": "2022-08-31T17:10:13.492019+00:00",
+                "jobID": "mgnjob-11d8c23ab1e3c9dc2"
+            },
+            "reverted": {}
+        },
+        "lastSeenByServiceDateTime": "2022-08-31T18:05:29.535757+00:00",
+        "lastTest": {
+            "finalized": {},
+            "initiated": {
+                "apiCallDateTime": "2022-08-31T15:42:30.904212+00:00",
+                "jobID": "mgnjob-113f80bf2819a725e"
+            },
+            "reverted": {}
+        },
+        "state": "CUTOVER"
+    },
+    "replicationType": "AGENT_BASED",
+    "sourceProperties": {
+        "cpus": [
+            {
+                "cores": 1,
+                "modelName": "Intel(R) Xeon(R) CPU E5-2676 v3 @ 2.40GHz"
+            }
+        ],
+        "disks": [
+            {
+                "bytes": 8589934592,
+                "deviceName": "/dev/xvda"
+            }
+        ],
+        "identificationHints": {
+            "awsInstanceID": "i-0982f5a2ad5c1a85c",
+            "fqdn": "ip-172-31-22-187.ec2.internal",
+            "hostname": "ip-172-31-22-187"
+        },
+        "lastUpdatedDateTime": "2022-08-31T17:48:58.323423+00:00",
+        "networkInterfaces": [
+            {
+                "ips": [
+                    "172.31.22.187"
+                ],
+                "isPrimary": true,
+                "macAddress": "0A-40-F1-E8-B2-2D"
+            }
+        ],
+        "os": {
+            "fullString": "Linux version 4.4.0-1087-aws (buildd@lcy01-amd64-010) (gcc version 5.4.0 20160609 (Ubuntu 5.4.0-6ubuntu1~16.04.10) ) #98-Ubuntu SMP Wed Jun 26 05:50:53 UTC 2019"
+        },
+        "ramBytes": 1038729216,
+        "recommendedInstanceType": "c4.large"
+    },
+    "sourceServerID": "s-13a5b49c3810fa449",
+    "tags": {
+        "resourceArn": "arn:aws:mgn:eu-central-1:820726337684:source-server/s-13a5b49c3810fa449"
+    }
+}
+```
+</details><br>
+
+The lifecycle should now be set to *Cutover complete*, thus, the migration can be considered completed.
