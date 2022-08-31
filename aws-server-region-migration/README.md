@@ -192,7 +192,7 @@ Go to [Application Migration Service > Source servers](https://eu-central-1.cons
 
 
 
-## 5. Edit MGN Launch Settings and Template (optional)
+## 5. Edit MGN Launch Settings and Template
 
 Be aware that the default EC2 Launch Template has a c4.large as instance type. To reduce the costs, reducing this instance to a t2.micro is recommended.
 
@@ -236,7 +236,68 @@ aws mgn update-launch-configuration \
 ```
 </details><br>
 
-TODO: create security group sg-02ace4f6edf5431df
+Create a security group to apply to the template.
+```
+aws ec2 create-security-group \
+--description "Kurento Migration Security Group" \
+--group-name KurentoMGNGroup \
+--region eu-central-1
+```
+<details><summary>Response example:</summary>
+
+```json
+{
+    "GroupId": "sg-0dec9fbe6f6274fb9"
+}
+```
+</details><br>
+
+Add the necessary inbound rules to the security group.
+```
+aws ec2 authorize-security-group-ingress \
+--group-id sg-0dec9fbe6f6274fb9 \
+--protocol tcp \
+--port 22 \
+--cidr 0.0.0.0/0 \
+--region eu-central-1
+```
+<details><summary>Response example:</summary>
+
+```json
+{
+    "Return": true,
+    "SecurityGroupRules": [
+        {
+            "SecurityGroupRuleId": "sgr-0d4724b49066aaf10",
+            "GroupId": "sg-0dec9fbe6f6274fb9",
+            "GroupOwnerId": "820726337684",
+            "IsEgress": false,
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIpv4": "0.0.0.0/0"
+        }
+    ]
+}
+```
+</details><br>
+
+```
+aws ec2 authorize-security-group-ingress \
+--group-id sg-0dec9fbe6f6274fb9 \
+--protocol tcp \
+--port 0-65535 \
+--cidr 0.0.0.0/0 \
+--region eu-central-1
+
+aws ec2 authorize-security-group-ingress \
+--group-id sg-0dec9fbe6f6274fb9 \
+--protocol udp \
+--port 0-65535 \
+--cidr 0.0.0.0/0 \
+--region eu-central-1
+```
+
 
 Now, we can finally create the EC2 Launch Template.
 
@@ -247,7 +308,7 @@ The `--launch-template-id` is provided in the last step, but can also be found i
 aws ec2 create-launch-template-version \
 --launch-template-id lt-098c8790e8e45c7f3 \
 --source-version 2 \
---launch-template-data '{"NetworkInterfaces":[{"DeviceIndex":0,"AssociatePublicIpAddress":true,"Groups":["sg-02ace4f6edf5431df"]}],"InstanceType":"t2.micro","KeyName":"KurentoKey2"}' \
+--launch-template-data '{"NetworkInterfaces":[{"DeviceIndex":0,"AssociatePublicIpAddress":true,"Groups":["sg-0dec9fbe6f6274fb9"]}],"InstanceType":"t2.micro","KeyName":"KurentoKey2"}' \
 --region eu-central-1
 ```
 <details><summary>Response example:</summary>
@@ -277,7 +338,7 @@ aws ec2 create-launch-template-version \
                     "AssociatePublicIpAddress": true,
                     "DeviceIndex": 0,
                     "Groups": [
-                        "sg-02ace4f6edf5431df"
+                        "sg-0dec9fbe6f6274fb9"
                     ]
                 }
             ],
