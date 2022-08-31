@@ -2,7 +2,7 @@
 
 This is a tutorial to replicate one server from one region to another. 
 
-<span style="color:#ffc107">**WARNING:**</span>
+**WARNING:**
 This tutorial can incur in charges, thus ensure that all resources are cleaned up after completing it (delete/terminate all EBS Volumes, Elastic Network Interface, and all EC2 instances that could possible be created).
 
 Before getting started, install the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) if not already installed. Make sure to follow the [Configuration Basics](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html) after instalation.
@@ -139,6 +139,7 @@ aws iam attach-user-policy \
 --user-name MGNUser \
 --policy-arn arn:aws:iam::aws:policy/AWSApplicationMigrationAgentPolicy
 ```
+<br>
 
 ```
 aws iam create-access-key --user-name MGNUser
